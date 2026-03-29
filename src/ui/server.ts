@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { randomUUID } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { mkdir, readdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, extname, join, relative, resolve } from "node:path";
@@ -70,6 +70,10 @@ import { getChatRoomSummary, loadChatSummaryStore } from "../runtime/chat-summar
 import { getHallTaskCard, getHallTaskCardByTask, loadCollaborationTaskCardStore } from "../runtime/collaboration-hall-store";
 import { loadReplayIndex, writeExportSnapshot } from "../runtime/replay-index";
 import { buildNotificationPreview, loadNotificationPolicy } from "../runtime/notification-policy";
+import {
+  resolveOpenClawAgentWorkspaceRoot,
+  resolveOpenClawWorkspaceRoot as resolveOpenClawWorkspaceRootShared,
+} from "../runtime/openclaw-workspace-root";
 import {
   NotificationCenterValidationError,
   acknowledgeActionQueueItem,
@@ -229,7 +233,7 @@ const AVATAR_UPLOAD_MAX_BYTES = 2 * 1024 * 1024;
 const SEARCH_LIMIT_MAX = 200;
 const TASK_RUNTIME_ACTIVITY_WINDOW_MS = 6 * 60 * 60 * 1000;
 const STALLED_RUNNING_SESSION_WINDOW_MS = 2 * 60 * 60 * 1000;
-const OPENCLAW_WORKSPACE_ROOT = resolveOpenClawWorkspaceRoot({
+const OPENCLAW_WORKSPACE_ROOT = resolveOpenClawWorkspaceRootShared({
   explicitWorkspaceRoot: process.env.OPENCLAW_WORKSPACE_ROOT?.trim(),
   openclawHomeDir: OPENCLAW_HOME_DIR,
   configPath: OPENCLAW_CONFIG_PATH,
@@ -301,59 +305,6 @@ const LEGACY_DASHBOARD_ROUTE_ANCHOR = {
   "/heartbeat": "heartbeat-health",
   "/tools": "tool-connectors",
 } as const;
-function resolveOpenClawWorkspaceRoot(input: {
-  explicitWorkspaceRoot?: string;
-  openclawHomeDir: string;
-  configPath: string;
-}): string {
-  const explicit = input.explicitWorkspaceRoot?.trim();
-  if (explicit) return resolve(explicit);
-  const configText = safeReadTextFileSync(input.configPath);
-  const inferred = inferWorkspaceRootFromConfigText(configText, dirname(input.configPath));
-  if (inferred) return inferred;
-  return join(input.openclawHomeDir, "workspace");
-}
-
-function safeReadTextFileSync(path: string): string | undefined {
-  try {
-    return readFileSync(path, "utf8");
-  } catch {
-    return undefined;
-  }
-}
-
-function inferWorkspaceRootFromConfigText(raw: string | undefined, configDir: string): string | undefined {
-  if (!raw?.trim()) return undefined;
-  try {
-    return inferWorkspaceRootFromConfigObject(JSON.parse(raw) as unknown, configDir);
-  } catch {
-    return undefined;
-  }
-}
-
-function inferWorkspaceRootFromConfigObject(input: unknown, configDir: string): string | undefined {
-  const root = asObject(input);
-  const agents = asObject(root?.agents);
-  const list = asArray(agents?.list);
-  const mainRow = list
-    .map((item) => asObject(item))
-    .find((row) => normalizeLookupKey(asString(row?.id)?.trim() ?? asString(row?.name)?.trim() ?? "") === "main");
-  const explicitMainWorkspace = asString(mainRow?.workspace)?.trim();
-  if (explicitMainWorkspace) return resolve(configDir, explicitMainWorkspace);
-
-  const inferredRoots = new Set<string>();
-  for (const item of list) {
-    const row = asObject(item);
-    const rawWorkspace = asString(row?.workspace)?.trim();
-    if (!rawWorkspace) continue;
-    const workspacePath = resolve(configDir, rawWorkspace);
-    const parentDir = dirname(workspacePath);
-    if (basename(parentDir).toLowerCase() !== "agents") continue;
-    inferredRoots.add(dirname(parentDir));
-  }
-  if (inferredRoots.size === 1) return [...inferredRoots][0];
-  return undefined;
-}
 
 export function resolveOpenClawWorkspaceRootForSmoke(input: {
   explicitWorkspaceRoot?: string;
@@ -361,12 +312,12 @@ export function resolveOpenClawWorkspaceRootForSmoke(input: {
   configText?: string;
   configPath?: string;
 }): string {
-  const explicit = input.explicitWorkspaceRoot?.trim();
-  if (explicit) return resolve(explicit);
-  const configDir = dirname(input.configPath?.trim() || join(input.openclawHomeDir, "openclaw.json"));
-  const inferred = inferWorkspaceRootFromConfigText(input.configText, configDir);
-  if (inferred) return inferred;
-  return join(input.openclawHomeDir, "workspace");
+  return resolveOpenClawWorkspaceRootShared({
+    explicitWorkspaceRoot: input.explicitWorkspaceRoot,
+    openclawHomeDir: input.openclawHomeDir,
+    configPath: input.configPath?.trim() || join(input.openclawHomeDir, "openclaw.json"),
+    configText: input.configText,
+  });
 }
 
 const TASK_STATES: TaskState[] = ["todo", "in_progress", "blocked", "done"];
@@ -11844,13 +11795,13 @@ function extractLabeledField(input: string, labels: string[]): string | undefine
 }
 
 function resolveStaffWorkspaceRoot(member: TeamMemberSnapshot): string {
-  const key = normalizeLookupKey(member.agentId);
-  if (key === "main") return OPENCLAW_WORKSPACE_ROOT;
-  const workspace = member.workspace.trim();
-  if (workspace && workspace !== "未标注" && workspace !== "unlisted") {
-    return resolve(OPENCLAW_CONFIG_DIR, workspace);
-  }
-  return join(OPENCLAW_WORKSPACE_ROOT, "agents", member.agentId);
+  return resolveOpenClawAgentWorkspaceRoot({
+    agentId: member.agentId,
+    rawWorkspace: member.workspace.trim(),
+    explicitWorkspaceRoot: process.env.OPENCLAW_WORKSPACE_ROOT?.trim(),
+    openclawHomeDir: OPENCLAW_HOME_DIR,
+    configPath: OPENCLAW_CONFIG_PATH,
+  });
 }
 
 async function loadStaffRoleEvidence(member: TeamMemberSnapshot): Promise<string[]> {
@@ -12399,9 +12350,13 @@ function resolveEditableAgentScopesFromWorkspaceAgentIds(agentIds: string[]): Ed
 }
 
 function resolveConfiguredWorkspaceRoot(rawWorkspace: string | undefined, agentId: string): string {
-  const workspace = rawWorkspace?.trim();
-  if (workspace) return resolve(OPENCLAW_CONFIG_DIR, workspace);
-  return join(OPENCLAW_WORKSPACE_ROOT, "agents", agentId);
+  return resolveOpenClawAgentWorkspaceRoot({
+    agentId,
+    rawWorkspace,
+    explicitWorkspaceRoot: process.env.OPENCLAW_WORKSPACE_ROOT?.trim(),
+    openclawHomeDir: OPENCLAW_HOME_DIR,
+    configPath: OPENCLAW_CONFIG_PATH,
+  });
 }
 
 async function resolveEditableFileEntry(

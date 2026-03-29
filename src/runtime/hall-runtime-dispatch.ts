@@ -28,7 +28,9 @@ import {
   completeHallDraftReply,
   pushHallDraftDelta,
 } from "./collaboration-stream";
+import { resolveOpenClawConfigPath, resolveOpenClawHomePath } from "./current-agent-catalog";
 import { inferHallDiscussionDomainFromText } from "./hall-discussion-domain";
+import { resolveOpenClawAgentWorkspaceRoot } from "./openclaw-workspace-root";
 import { readSessionConversationHistory, type SessionHistoryMessage } from "./session-conversations";
 
 interface ToolClientWithAgentRun extends ToolClient {
@@ -150,7 +152,8 @@ interface HallRuntimeRepoContext {
 type HallResponseLanguage = "zh" | "en";
 
 const CONTROL_CENTER_REPO_ROOT = process.cwd();
-const AGENT_WORKSPACES_ROOT = join(CONTROL_CENTER_REPO_ROOT, "..", "..");
+const OPENCLAW_HOME_DIR = resolveOpenClawHomePath();
+const OPENCLAW_CONFIG_PATH = resolveOpenClawConfigPath();
 const CONTROL_CENTER_REPO_ENTRY_FILES = [
   "src/ui/collaboration-hall.ts",
   "src/ui/collaboration-hall-theme.ts",
@@ -773,14 +776,20 @@ function describeHallParticipantLightPersona(role: HallParticipant["semanticRole
 }
 
 function describeHallParticipantWorkspacePersona(participant: HallParticipant): string {
-  const workspaceId = normalizeLookup((participant.agentId ?? participant.participantId).trim());
-  if (!workspaceId) return "";
-  const cached = HALL_WORKSPACE_PERSONA_CACHE.get(workspaceId);
+  const participantAgentId = (participant.agentId ?? participant.participantId).trim();
+  const cacheKey = normalizeLookup(participantAgentId);
+  if (!cacheKey) return "";
+  const cached = HALL_WORKSPACE_PERSONA_CACHE.get(cacheKey);
   if (cached !== undefined) return cached;
 
-  const workspaceRoot = join(AGENT_WORKSPACES_ROOT, workspaceId);
+  const workspaceRoot = resolveOpenClawAgentWorkspaceRoot({
+    agentId: participantAgentId,
+    explicitWorkspaceRoot: process.env.OPENCLAW_WORKSPACE_ROOT?.trim(),
+    openclawHomeDir: OPENCLAW_HOME_DIR,
+    configPath: OPENCLAW_CONFIG_PATH,
+  });
   const summary = summarizeWorkspacePersonaFromFiles(workspaceRoot);
-  HALL_WORKSPACE_PERSONA_CACHE.set(workspaceId, summary);
+  HALL_WORKSPACE_PERSONA_CACHE.set(cacheKey, summary);
   return summary;
 }
 
