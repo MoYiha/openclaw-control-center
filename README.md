@@ -178,15 +178,43 @@ Notes:
 - Approval actions are dry-run by default (`APPROVAL_ACTIONS_DRY_RUN=true`).
 - No mutation of `~/.openclaw/openclaw.json`.
 
+## What `LOCAL_API_TOKEN` is
+- `LOCAL_API_TOKEN` is a machine-local shared secret that you set yourself in `.env`.
+- It protects write actions such as save, import/export-with-side-effects, approvals, and hall/task-room mutations when `LOCAL_TOKEN_AUTH_REQUIRED=true`.
+- Typical first-run setup:
+  - keep `LOCAL_TOKEN_AUTH_REQUIRED=true`
+  - set `LOCAL_API_TOKEN` to a long random string
+  - enter that same token in the UI when a protected action prompts for it
+- If you leave `LOCAL_API_TOKEN` unset while the auth gate is enabled, protected writes stay blocked by design.
+
 ## Quick start
 1. `npm install`
 2. `cp .env.example .env`
 3. Keep safe defaults for the first run; only change `GATEWAY_URL` or path overrides if your OpenClaw setup is non-standard.
-4. `npm run build`
-5. `npm test`
-6. `npm run smoke:ui`
-7. `npm run smoke:hall`
-8. `npm run dev:ui`
+4. Before testing save/import/hall write actions, set `LOCAL_API_TOKEN` in `.env` to a long random string.
+5. `npm run build`
+6. `npm test`
+7. `npm run smoke:ui`
+8. `npm run smoke:hall`
+9. `npm run dev:ui`
+
+## Docker deployment
+- Yes, the control center can run in Docker.
+- The key requirement is not Docker itself; it is that the container can see the same OpenClaw data paths and reach the Gateway.
+- A minimal starting point is included in `Dockerfile` and `docker-compose.example.yml`.
+- For a Dockerized OpenClaw setup, make sure these are wired correctly:
+  - `GATEWAY_URL`
+  - `OPENCLAW_HOME`
+  - `OPENCLAW_CONFIG_PATH`
+  - `OPENCLAW_WORKSPACE_ROOT`
+  - `CODEX_HOME` when you want Codex usage/subscription data
+- Typical local run:
+  - `cp .env.example .env`
+  - edit `docker-compose.example.yml` mount paths and `LOCAL_API_TOKEN`
+  - `docker compose -f docker-compose.example.yml up --build`
+- If the UI is reached through a reverse proxy, LAN host, or Tailscale, also set:
+  - `OPENCLAW_CONTROL_UI_URL`
+  - `UI_BIND_ADDRESS=0.0.0.0`
 
 ## Installation and onboarding
 

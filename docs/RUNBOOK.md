@@ -48,6 +48,7 @@
   - `IMPORT_MUTATION_DRY_RUN=false`
 
 ## 4) Local token auth gate
+- `LOCAL_API_TOKEN` is the machine-local token you set in `.env` yourself. Think of it as the shared secret for protected writes on this control-center instance.
 - Protected operations require local token auth when `LOCAL_TOKEN_AUTH_REQUIRED=true` (default):
   - all state-changing routes (`POST`/`PATCH` APIs and form ack route)
   - task heartbeat execution route (`POST /api/tasks/heartbeat`)

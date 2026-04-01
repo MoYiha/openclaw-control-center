@@ -503,6 +503,10 @@ interface TeamMemberSnapshot {
   agentId: string;
   displayName: string;
   model: string;
+  configuredModel: string;
+  currentModel: string;
+  currentModelUpdatedAt?: string;
+  customNote?: string;
   workspace: string;
   toolsProfile: string;
 }
@@ -5926,7 +5930,7 @@ async function renderHtml(
   }
   const [teamSnapshot, memoryFiles, memoryFacetOptions, workspaceFiles, workspaceFacetOptions, taskEvidenceItems, connectionHealthSummary, securitySummary, updateSummary, memoryStateSummary] = await Promise.all([
     needsTeamSnapshot
-      ? loadTeamSnapshot(officeRoster)
+      ? loadTeamSnapshot(officeRoster, snapshot)
       : Promise.resolve<TeamSnapshot>({
           missionStatement: t("No shared mission loaded.", "尚未加载共同目标。"),
           members: [],
@@ -6208,19 +6212,19 @@ async function renderHtml(
     {
       label: "关键操作身份验证",
       value: String(LOCAL_TOKEN_AUTH_REQUIRED),
-      note: LOCAL_TOKEN_AUTH_REQUIRED ? "已开启，关键操作需要身份验证。" : "未开启，建议在生产环境开启。",
+      note: LOCAL_TOKEN_AUTH_REQUIRED ? "已开启，保存、导入、审批和 hall/room 写操作需要 LOCAL_API_TOKEN。" : "未开启，建议在生产环境开启。",
       status: LOCAL_TOKEN_AUTH_REQUIRED ? "enabled" : "warn",
     },
     {
       label: "身份验证配置",
       value: String(importGuard.localTokenConfigured),
-      note: importGuard.localTokenConfigured ? "已配置完成。" : "尚未配置，关键操作将被拦截。",
+      note: importGuard.localTokenConfigured ? "已配置完成。这是当前机器上用于保护关键写入的本地口令。" : "尚未配置。LOCAL_API_TOKEN 是当前机器上用于保护关键写入的本地口令。",
       status: importGuard.localTokenConfigured ? "enabled" : "blocked",
     },
     {
       label: "身份验证状态",
       value: tokenGateStatus === "armed" ? "已就绪" : tokenGateStatus === "blocked_no_token" ? "未配置" : "未开启",
-      note: "用于保护关键写入操作。",
+      note: "用于保护保存、导入、审批和 hall/room 写操作。",
       status: tokenGateStatus === "armed" ? "enabled" : tokenGateStatus === "blocked_no_token" ? "blocked" : "disabled",
     },
     {
@@ -6596,6 +6600,19 @@ async function renderHtml(
   const usageSessionTypePieHtml = renderTokenPieChart(usageSessionTypeRows, usageSessionTypeTotalTokens, t("All sessions", "全部会话"), options.language);
   const usageCronJobPieHtml = renderTokenPieChart(usageCronJobRows, usageCronTotalTokens, t("Timed jobs", "定时任务"), options.language);
   const usageCronAgentPieHtml = renderTokenPieChart(usageCronAgentRows, usageCronAgentTotalTokens, t("Agents", "智能体"), options.language);
+  const requestOverviewCards = renderRequestCountCards(usageCost.periods, options.language);
+  const requestOverviewRows = [...selectedUsageBreakdown.byAgent]
+    .filter((item) => item.requests > 0)
+    .sort((a, b) => {
+      if (b.requests !== a.requests) return b.requests - a.requests;
+      if (b.tokens !== a.tokens) return b.tokens - a.tokens;
+      return a.label.localeCompare(b.label, options.language === "en" ? "en" : "zh-Hans-CN");
+    })
+    .slice(0, 8);
+  const requestOverviewTableHtml =
+    requestOverviewRows.length === 0
+      ? `<div class="empty-state">${escapeHtml(t("No request count detail yet.", "暂无请求数明细。"))}</div>`
+      : `<table><thead><tr><th>${escapeHtml(t("Agent", "智能体"))}</th><th>${escapeHtml(t("Requests", "请求数"))}</th><th>${escapeHtml(t("Sessions", "会话数"))}</th><th>${escapeHtml(t("Usage", "用量"))}</th><th>${escapeHtml(t("Data status", "数据状态"))}</th></tr></thead><tbody>${renderRequestBreakdownRows(requestOverviewRows, options.language)}</tbody></table>`;
   const usageSessionTypeShareHtml =
     usageSessionTypeRows.length === 0
       ? `<div class="empty-state">${escapeHtml(t("No session-type usage data yet.", "暂无会话类型用量数据。"))}</div>`
@@ -7224,13 +7241,24 @@ async function renderHtml(
   `;
   const teamMembersTableRows =
     teamSnapshot.members.length === 0
-      ? `<tr><td colspan="5">${escapeHtml(t("No staff found.", "暂无员工。"))}</td></tr>`
+      ? `<tr><td colspan="7">${escapeHtml(t("No staff found.", "暂无员工。"))}</td></tr>`
       : teamSnapshot.members
           .map(
             (member) =>
-              `<tr><td>${escapeHtml(member.displayName)}</td><td><code>${escapeHtml(member.agentId)}</code></td><td>${escapeHtml(member.model)}</td><td>${escapeHtml(member.toolsProfile)}</td><td>${escapeHtml(member.workspace)}</td></tr>`,
+              `<tr><td>${escapeHtml(member.displayName)}</td><td><code>${escapeHtml(member.agentId)}</code></td><td>${escapeHtml(member.configuredModel)}</td><td>${escapeHtml(member.currentModel)}${
+                member.currentModelUpdatedAt
+                  ? `<div class="meta">${escapeHtml(t("Updated", "更新"))} ${escapeHtml(member.currentModelUpdatedAt)}</div>`
+                  : `<div class="meta">${escapeHtml(t("No runtime model observed yet.", "尚未观察到运行时模型。"))}</div>`
+              }</td><td>${escapeHtml(member.customNote ?? t("Not provided", "未提供"))}</td><td>${escapeHtml(member.toolsProfile)}</td><td>${escapeHtml(member.workspace)}</td></tr>`,
           )
           .join("");
+  const staffSessionHistoryHtml = renderStaffSessionHistory({
+    members: teamSnapshot.members,
+    sessions: snapshot.sessions,
+    statuses: snapshot.statuses,
+    tasks,
+    language: options.language,
+  });
   const teamSection = activeSection === "team" ? `
     <section class="card">
       <h2>${escapeHtml(t("Staff overview", "员工总览"))}</h2>
@@ -7248,10 +7276,19 @@ async function renderHtml(
     <details class="card compact-details">
       <summary>${escapeHtml(t("Staff system details", "员工配置明细"))}</summary>
       <div class="fold-body">
+        <div class="meta">${escapeHtml(t("Configured model comes from openclaw.json or its defaults. Current model comes from the latest runtime session signal we can observe.", "配置模型来自 openclaw.json 或其默认值；当前运行模型来自当前能观察到的最新运行时会话信号。"))}</div>
+        <div class="meta">${escapeHtml(t("Display name can come from name / displayName / alias. Custom note can come from description / role / mission / note.", "展示名称可来自 name / displayName / alias；自定义说明可来自 description / role / mission / note。"))}</div>
         <table>
-          <thead><tr><th>${escapeHtml(t("Name", "名称"))}</th><th>agentId</th><th>${escapeHtml(t("Model", "模型"))}</th><th>${escapeHtml(t("Tool profile", "工具权限"))}</th><th>${escapeHtml(t("Workspace", "工作目录"))}</th></tr></thead>
+          <thead><tr><th>${escapeHtml(t("Name", "名称"))}</th><th>agentId</th><th>${escapeHtml(t("Configured model", "配置模型"))}</th><th>${escapeHtml(t("Current model", "当前运行模型"))}</th><th>${escapeHtml(t("Custom note", "自定义说明"))}</th><th>${escapeHtml(t("Tool profile", "工具权限"))}</th><th>${escapeHtml(t("Workspace", "工作目录"))}</th></tr></thead>
           <tbody>${teamMembersTableRows}</tbody>
         </table>
+      </div>
+    </details>
+    <details class="card compact-details">
+      <summary>${escapeHtml(t("Staff recent sessions", "员工最近会话"))}</summary>
+      <div class="fold-body">
+        <div class="meta">${escapeHtml(t("Shows the latest observed sessions for each staff member, with task linkage, model, and token totals when available.", "按员工展示最近观察到的会话，并补上任务关联、模型和可见的 token 总量。"))}</div>
+        ${staffSessionHistoryHtml}
       </div>
     </details>
   ` : "";
@@ -7489,6 +7526,16 @@ async function renderHtml(
       </details>
     </section>
     ${contextPressureCard}
+    <section class="card" id="usage-request-overview">
+      <div class="overview-command-head">
+        <h2>${escapeHtml(t("Request counts", "请求数总览"))}</h2>
+        <div>${badge(usageCost.connectors.requestCounts, dataConnectionLabel(usageCost.connectors.requestCounts, options.language))}</div>
+      </div>
+      <div class="meta">${escapeHtml(t("Pulled out of advanced detail so request-based subscription checks stay visible at a glance.", "从高级明细里单独提出来，方便直接查看和订阅相关的请求数变化。"))}</div>
+      ${requestOverviewCards}
+      <div style="height:10px;"></div>
+      ${requestOverviewTableHtml}
+    </section>
     <details class="card compact-details">
       <summary>${escapeHtml(t("Advanced detail (attribution / model / context / budget)", "高级明细（归因/模型/上下文/预算）"))}</summary>
       <div class="fold-body">
@@ -12791,8 +12838,8 @@ async function renderEditableFileWorkbench(input: {
   const tokenHint = !LOCAL_TOKEN_AUTH_REQUIRED
     ? t("This environment allows direct save.", "当前环境允许直接保存。")
     : LOCAL_API_TOKEN
-      ? t("Enter the local token when saving.", "保存时输入本地令牌。")
-      : t("LOCAL_API_TOKEN is not configured in this environment. Save will be blocked.", "当前环境未配置 LOCAL_API_TOKEN，保存会被拦截。");
+      ? t("Enter the LOCAL_API_TOKEN configured in .env when saving.", "保存时输入 .env 中配置的 LOCAL_API_TOKEN。")
+      : t("Set LOCAL_API_TOKEN in .env first. It is the local token used to protect writes.", "请先在 .env 中设置 LOCAL_API_TOKEN。它是用于保护写操作的本地口令。");
   const tokenField =
     LOCAL_TOKEN_AUTH_REQUIRED && LOCAL_API_TOKEN
       ? `<input class="file-token-input" type="password" data-file-token placeholder="${escapeHtml(t("Local token", "本地令牌"))}" />`
@@ -12852,7 +12899,7 @@ function renderStructuredChatDocSummary(entries: StructuredChatDocEntry[]): stri
     .join("")}</ul>`;
 }
 
-async function loadTeamSnapshot(officeRoster: AgentRosterSnapshot): Promise<TeamSnapshot> {
+async function loadTeamSnapshot(officeRoster: AgentRosterSnapshot, snapshot: ReadModelSnapshot): Promise<TeamSnapshot> {
   const sourcePath = OPENCLAW_CONFIG_PATH;
   const fallbackMission = "构建可持续自治的 AI 员工体系，持续完成高价值任务。";
   const missionFromAgentDoc = await safeReadTextFile(join(AGENT_ROOT_DIR, "AGENTS.md"));
@@ -12872,6 +12919,9 @@ async function loadTeamSnapshot(officeRoster: AgentRosterSnapshot): Promise<Team
         agentId: entry.agentId,
         displayName: entry.displayName,
         model: "未标注",
+        configuredModel: "未标注",
+        currentModel: "未观察到",
+        customNote: undefined,
         workspace: "未标注",
         toolsProfile: "default",
       })),
@@ -12886,6 +12936,7 @@ async function loadTeamSnapshot(officeRoster: AgentRosterSnapshot): Promise<Team
     const defaultModel =
       (defaults.model as Record<string, unknown> | undefined)?.primary;
     const list = Array.isArray(agentsRoot?.list) ? agentsRoot?.list : [];
+    const runtimeModelByAgent = buildLatestRuntimeModelByAgent(snapshot);
     const members: TeamMemberSnapshot[] = [];
     for (const item of list) {
       if (!item || typeof item !== "object") continue;
@@ -12893,13 +12944,30 @@ async function loadTeamSnapshot(officeRoster: AgentRosterSnapshot): Promise<Team
       const id = typeof obj.id === "string" ? obj.id.trim() : "";
       if (!id) continue;
       const tools = (obj.tools ?? {}) as Record<string, unknown>;
+      const configuredModel =
+        (typeof obj.model === "string" && obj.model.trim()) ||
+        (typeof defaultModel === "string" ? defaultModel : "未标注");
+      const runtimeModel = runtimeModelByAgent.get(normalizeLookupKey(id));
+      const displayName =
+        asString(obj.name)?.trim() ||
+        asString(obj.displayName)?.trim() ||
+        asString(obj.alias)?.trim() ||
+        asString(obj.title)?.trim() ||
+        id;
+      const customNote =
+        asString(obj.description)?.trim() ||
+        asString(obj.role)?.trim() ||
+        asString(obj.mission)?.trim() ||
+        asString(obj.note)?.trim() ||
+        undefined;
       members.push({
         agentId: id,
-        displayName:
-          (typeof obj.name === "string" && obj.name.trim()) || id,
-        model:
-          (typeof obj.model === "string" && obj.model.trim()) ||
-          (typeof defaultModel === "string" ? defaultModel : "未标注"),
+        displayName,
+        model: configuredModel,
+        configuredModel,
+        currentModel: runtimeModel?.model ?? "未观察到",
+        currentModelUpdatedAt: runtimeModel?.updatedAt,
+        customNote,
         workspace:
           (typeof obj.workspace === "string" && obj.workspace.trim()) || "未标注",
         toolsProfile:
@@ -12919,6 +12987,9 @@ async function loadTeamSnapshot(officeRoster: AgentRosterSnapshot): Promise<Team
         agentId: entry.agentId,
         displayName: entry.displayName,
         model: "未标注",
+        configuredModel: "未标注",
+        currentModel: "未观察到",
+        customNote: undefined,
         workspace: "未标注",
         toolsProfile: "default",
       })),
@@ -12926,6 +12997,35 @@ async function loadTeamSnapshot(officeRoster: AgentRosterSnapshot): Promise<Team
       detail: "openclaw.json 解析失败，已回退为运行时员工名录。",
     };
   }
+}
+
+function buildLatestRuntimeModelByAgent(
+  snapshot: ReadModelSnapshot,
+): Map<string, { model: string; updatedAt: string }> {
+  const agentIdBySessionKey = new Map<string, string>();
+  for (const session of snapshot.sessions) {
+    const sessionKey = session.sessionKey?.trim();
+    if (!sessionKey) continue;
+    const agentId = session.agentId?.trim() || extractAgentIdFromSessionKey(sessionKey);
+    if (!agentId) continue;
+    agentIdBySessionKey.set(sessionKey, agentId);
+  }
+
+  const latestByAgent = new Map<string, { model: string; updatedAt: string }>();
+  for (const status of snapshot.statuses) {
+    const sessionKey = status.sessionKey?.trim();
+    const model = status.model?.trim();
+    if (!sessionKey || !model) continue;
+    const agentId = agentIdBySessionKey.get(sessionKey) ?? extractAgentIdFromSessionKey(sessionKey);
+    if (!agentId) continue;
+    const key = normalizeLookupKey(agentId);
+    const existing = latestByAgent.get(key);
+    if (!existing || toSortableMs(status.updatedAt) >= toSortableMs(existing.updatedAt)) {
+      latestByAgent.set(key, { model, updatedAt: status.updatedAt });
+    }
+  }
+
+  return latestByAgent;
 }
 
 function summarizeFilters(filters: TaskQueryFilters): string {
@@ -13732,6 +13832,9 @@ export async function buildStaffOverviewCards(input: {
         agentId: item.agentId,
         displayName: item.displayName,
         model: "unlisted",
+        configuredModel: "unlisted",
+        currentModel: "unlisted",
+        customNote: undefined,
         workspace: "unlisted",
         toolsProfile: "default",
       }));
@@ -18156,6 +18259,54 @@ function renderUsageBreakdownRows(
     .join("");
 }
 
+function renderRequestBreakdownRows(
+  rows: UsageCostSnapshot["breakdown"]["byAgent"],
+  language: UiLanguage = "zh",
+): string {
+  if (rows.length === 0) return "";
+
+  return rows
+    .map(
+      (item) =>
+        `<tr><td>${escapeHtml(simplifyUsageLabel(item.label))}</td><td>${item.requests}</td><td>${item.sessions}</td><td>${formatInt(item.tokens)}</td><td>${badge(item.sourceStatus, dataConnectionLabel(item.sourceStatus, language))}</td></tr>`,
+    )
+    .join("");
+}
+
+function renderRequestCountCards(
+  periods: UsageCostSnapshot["periods"],
+  language: UiLanguage = "zh",
+): string {
+  if (periods.length === 0) {
+    return `<div class="empty-state">${escapeHtml(
+      pickUiText(language, "No request snapshot yet because the data source is not connected.", "数据源未连接，暂无请求数快照。"),
+    )}</div>`;
+  }
+
+  const orderedKeys: Array<UsageCostSnapshot["periods"][number]["key"]> = ["today", "7d", "30d"];
+  const rows = orderedKeys
+    .map((key) => periods.find((period) => period.key === key))
+    .filter((period): period is UsageCostSnapshot["periods"][number] => Boolean(period));
+
+  return `<div class="status-strip">${rows
+    .map((period) => {
+      const requestLabel =
+        period.requestCountStatus !== "not_connected" && typeof period.requestCount === "number"
+          ? formatInt(period.requestCount)
+          : pickUiText(language, "Not connected", "数据源未连接");
+      const tokenLabel =
+        period.sourceStatus === "not_connected"
+          ? pickUiText(language, "Not connected", "数据源未连接")
+          : formatInt(period.tokens);
+      return `<div class="status-chip usage-chip"><span>${escapeHtml(usagePeriodLabel(period.key, period.label, language))}</span><strong>${escapeHtml(
+        pickUiText(language, "Requests", "请求数"),
+      )}：${escapeHtml(requestLabel)}</strong><span>${escapeHtml(pickUiText(language, "AI usage", "AI 用量"))}：${escapeHtml(tokenLabel)}</span><span>${escapeHtml(
+        pickUiText(language, "Pace", "节奏"),
+      )}：${escapeHtml(period.pace.label)}</span></div>`;
+    })
+    .join("")}</div>`;
+}
+
 function renderTokenShareRows(
   rows: UsageCostSnapshot["breakdown"]["byAgent"],
   totalTokens: number,
@@ -18426,6 +18577,66 @@ function renderSessionPreviewRows(items: SessionConversationListItem[], language
       return `<tr><td><a href="${escapeHtml(buildSessionDetailHref(item.sessionKey, language))}"><code>${escapeHtml(item.sessionKey)}</code></a></td><td>${badge(item.state, sessionStateLabel(item.state))}</td><td>${escapeHtml(agent)}</td><td>${badge(latestKind)} ${escapeHtml(latestLabel)}${escapeHtml(latestTime)}</td><td>${escapeHtml(summarizeVisibleSessionSnippet(item.latestSnippet, language, 220))}</td><td>${escapeHtml(historyState)}</td></tr>`;
     })
     .join("");
+}
+
+function renderStaffSessionHistory(input: {
+  members: TeamMemberSnapshot[];
+  sessions: ReadModelSnapshot["sessions"];
+  statuses: ReadModelSnapshot["statuses"];
+  tasks: TaskListItem[];
+  language: UiLanguage;
+}): string {
+  if (input.members.length === 0) {
+    return `<div class="empty-state">${escapeHtml(
+      pickUiText(input.language, "No staff session history is available yet.", "当前没有可展示的员工会话历史。"),
+    )}</div>`;
+  }
+
+  const statusBySessionKey = new Map(input.statuses.map((item) => [item.sessionKey, item]));
+  const taskBySessionKey = new Map<string, TaskListItem>();
+  for (const task of input.tasks) {
+    for (const sessionKey of task.sessionKeys) {
+      if (!taskBySessionKey.has(sessionKey)) taskBySessionKey.set(sessionKey, task);
+    }
+  }
+
+  const groups = input.members
+    .map((member) => {
+      const agentKey = normalizeLookupKey(member.agentId);
+      const sessions = input.sessions
+        .filter((session) => {
+          const sessionAgentId = session.agentId?.trim() || extractAgentIdFromSessionKey(session.sessionKey);
+          return sessionAgentId ? normalizeLookupKey(sessionAgentId) === agentKey : false;
+        })
+        .sort(compareSessionSummariesByLatest)
+        .slice(0, 6);
+
+      const body =
+        sessions.length === 0
+          ? `<div class="empty-state">${escapeHtml(
+              pickUiText(input.language, "No recent sessions observed yet.", "暂未观察到最近会话。"),
+            )}</div>`
+          : `<ul class="group-items">${sessions
+              .map((session) => {
+                const status = statusBySessionKey.get(session.sessionKey);
+                const task = taskBySessionKey.get(session.sessionKey);
+                const totalTokens =
+                  typeof status?.tokensIn === "number" || typeof status?.tokensOut === "number"
+                    ? (status?.tokensIn ?? 0) + (status?.tokensOut ?? 0)
+                    : undefined;
+                const taskLabel = task
+                  ? `<a href="${escapeHtml(buildTaskDetailHref(task.taskId, input.language))}">${escapeHtml(task.title)}</a>`
+                  : escapeHtml(pickUiText(input.language, "Not mapped yet", "尚未关联任务"));
+                const activityAt = session.lastMessageAt ?? status?.updatedAt;
+                return `<li class="group-item"><div class="group-item-head"><strong><a href="${escapeHtml(buildSessionDetailHref(session.sessionKey, input.language))}"><code>${escapeHtml(session.sessionKey)}</code></a></strong>${badge(session.state, sessionStateLabel(session.state))}</div><div class="meta">${escapeHtml(pickUiText(input.language, "Task", "任务"))}：${taskLabel} · ${escapeHtml(pickUiText(input.language, "Model", "模型"))}：${escapeHtml(status?.model ?? member.currentModel ?? pickUiText(input.language, "Not observed", "未观察到"))}</div><div class="meta">${escapeHtml(pickUiText(input.language, "Latest activity", "最近活动"))}：${escapeHtml(activityAt ?? pickUiText(input.language, "Unknown", "未知"))} · ${escapeHtml(pickUiText(input.language, "Total tokens", "总 token"))}：${escapeHtml(totalTokens !== undefined ? formatInt(totalTokens) : pickUiText(input.language, "Not connected", "数据源未连接"))}</div></li>`;
+              })
+              .join("")}</ul>`;
+
+      return `<details class="group-section"${sessions.length > 0 ? " open" : ""}><summary>${escapeHtml(member.displayName)} (${sessions.length})</summary>${body}</details>`;
+    })
+    .join("");
+
+  return `<div class="group-list">${groups}</div>`;
 }
 
 function renderSessionDrilldownPage(

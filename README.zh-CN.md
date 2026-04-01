@@ -170,15 +170,43 @@ npm run dev:ui
 - 审批动作默认 dry-run：`APPROVAL_ACTIONS_DRY_RUN=true`
 - 不会改写 `~/.openclaw/openclaw.json`
 
+## `LOCAL_API_TOKEN` 是什么
+- `LOCAL_API_TOKEN` 是你自己在 `.env` 里设置的“本机共享口令”。
+- 当 `LOCAL_TOKEN_AUTH_REQUIRED=true` 时，它用于保护保存、导入/导出副作用、审批，以及 hall / task-room 里的写操作。
+- 常见首次配置方式：
+  - 保持 `LOCAL_TOKEN_AUTH_REQUIRED=true`
+  - 把 `LOCAL_API_TOKEN` 设成一串足够长的随机字符串
+  - 在 UI 提示输入关键操作口令时，输入同一个值
+- 如果鉴权开关开着、但 `LOCAL_API_TOKEN` 没配置，关键写操作会按设计被拦截。
+
 ## 快速开始
 1. `npm install`
 2. `cp .env.example .env`
 3. 第一次接入尽量保持安全默认值；只有在你的 OpenClaw 环境不是默认路径时，再改 `GATEWAY_URL` 或路径覆盖项
-4. `npm run build`
-5. `npm test`
-6. `npm run smoke:ui`
-7. `npm run smoke:hall`
-8. `npm run dev:ui`
+4. 如果你要测试保存、导入或 hall 写操作，先在 `.env` 里把 `LOCAL_API_TOKEN` 设成一串足够长的随机字符串
+5. `npm run build`
+6. `npm test`
+7. `npm run smoke:ui`
+8. `npm run smoke:hall`
+9. `npm run dev:ui`
+
+## Docker 部署
+- 可以，控制中心支持通过 Docker 运行。
+- 真正关键的不只是 Docker，而是容器里能否看到同一套 OpenClaw 数据路径，并且能连到 Gateway。
+- 仓库里已经放了一套最小样板：`Dockerfile` 和 `docker-compose.example.yml`。
+- 如果你的 OpenClaw 本身也是 Docker 部署，重点把这些映射对：
+  - `GATEWAY_URL`
+  - `OPENCLAW_HOME`
+  - `OPENCLAW_CONFIG_PATH`
+  - `OPENCLAW_WORKSPACE_ROOT`
+  - 如果你还想看 Codex 用量 / 订阅，再补 `CODEX_HOME`
+- 常见本地启动方式：
+  - `cp .env.example .env`
+  - 按实际路径修改 `docker-compose.example.yml` 里的挂载和 `LOCAL_API_TOKEN`
+  - `docker compose -f docker-compose.example.yml up --build`
+- 如果 UI 需要通过反向代理、局域网地址或 Tailscale 访问，再额外设置：
+  - `OPENCLAW_CONTROL_UI_URL`
+  - `UI_BIND_ADDRESS=0.0.0.0`
 
 ## 安装与上手
 
