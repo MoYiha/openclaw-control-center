@@ -8,15 +8,17 @@ import {
   IMPORT_MUTATION_ENABLED,
   LOCAL_API_TOKEN,
   LOCAL_TOKEN_AUTH_REQUIRED,
+  MONITOR_CONTINUOUS_MAX_INTERVAL_MS,
   POLLING_INTERVALS_MS,
   READONLY_MODE,
   TASK_HEARTBEAT_DRY_RUN,
   TASK_HEARTBEAT_ENABLED,
   TASK_HEARTBEAT_MAX_TASKS_PER_RUN,
+  UI_TIMEZONE,
 } from "./config";
 import { buildExportBundle, writeExportBundle } from "./runtime/export-bundle";
 import { validateExportFileDryRun } from "./runtime/import-dry-run";
-import { monitorIntervalMs, runMonitorOnce } from "./runtime/monitor";
+import { monitorIntervalMs, nextContinuousMonitorDelayMs, runMonitorOnce } from "./runtime/monitor";
 import { pruneStaleAcks } from "./runtime/notification-center";
 import { appendOperationAudit } from "./runtime/operation-audit";
 import { runTaskHeartbeat, runtimeTaskHeartbeatGate } from "./runtime/task-heartbeat";
@@ -43,6 +45,7 @@ async function start(): Promise<void> {
     importMutationDryRun: IMPORT_MUTATION_DRY_RUN,
     localTokenAuthRequired: LOCAL_TOKEN_AUTH_REQUIRED,
     localTokenConfigured: LOCAL_API_TOKEN !== "",
+    uiTimezone: UI_TIMEZONE,
     taskHeartbeat: {
       enabled: TASK_HEARTBEAT_ENABLED,
       dryRun: TASK_HEARTBEAT_DRY_RUN,
@@ -63,25 +66,44 @@ async function start(): Promise<void> {
     startUiServer(UI_PORT, client);
   }
 
-  const runMonitorSafely = async (): Promise<void> => {
+  const runMonitorSafely = async () => {
     try {
-      await runMonitorOnce(adapter);
+      return await runMonitorOnce(adapter);
     } catch (error) {
       console.error("[mission-control] monitor failed", error);
+      return undefined;
     }
   };
 
-  if (UI_MODE) {
+  if (UI_MODE && !CONTINUOUS_MODE) {
     void runMonitorSafely();
   } else {
     await runMonitorSafely();
   }
 
   if (CONTINUOUS_MODE) {
-    const intervalMs = monitorIntervalMs();
-    setInterval(() => {
-      void runMonitorSafely();
-    }, intervalMs);
+    const baseIntervalMs = monitorIntervalMs();
+    let idleStreak = 0;
+
+    const scheduleNext = (delayMs: number): void => {
+      setTimeout(() => {
+        void runContinuousMonitorTick();
+      }, delayMs);
+    };
+
+    const runContinuousMonitorTick = async (): Promise<void> => {
+      const summary = await runMonitorSafely();
+      const next = nextContinuousMonitorDelayMs(
+        baseIntervalMs,
+        idleStreak,
+        summary,
+        MONITOR_CONTINUOUS_MAX_INTERVAL_MS,
+      );
+      idleStreak = next.idleStreak;
+      scheduleNext(next.delayMs);
+    };
+
+    scheduleNext(baseIntervalMs);
   }
 }
 

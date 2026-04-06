@@ -15,6 +15,7 @@ import {
   OPENCLAW_CONTROL_UI_URL,
   POLLING_INTERVALS_MS,
   READONLY_MODE,
+  UI_TIMEZONE,
 } from "../config";
 import type { ToolClient } from "../clients/tool-client";
 import { mapSessionsListToSummaries } from "../mappers/openclaw-mappers";
@@ -70,6 +71,7 @@ import {
 import { getChatRoomSummary, loadChatSummaryStore } from "../runtime/chat-summary-store";
 import { getHallTaskCard, getHallTaskCardByTask, loadCollaborationTaskCardStore } from "../runtime/collaboration-hall-store";
 import { loadReplayIndex, writeExportSnapshot } from "../runtime/replay-index";
+import { formatTimestampForUi } from "../runtime/ui-timezone";
 import { buildNotificationPreview, loadNotificationPolicy } from "../runtime/notification-policy";
 import {
   resolveOpenClawAgentWorkspaceRoot,
@@ -3559,6 +3561,12 @@ async function buildGlobalVisibilityViewModel(
     heartbeatJobs.find((job) => job.enabled)?.nextRunAt ??
     heartbeatJobs[0]?.nextRunAt ??
     pickUiText(language, "Not scheduled", "未排程");
+  const cronNextRunLabel = cronNextRun === pickUiText(language, "Not scheduled", "未排程")
+    ? cronNextRun
+    : formatUiTimestamp(cronNextRun, language);
+  const heartbeatNextRunLabel = heartbeatNextRun === pickUiText(language, "Not scheduled", "未排程")
+    ? heartbeatNextRun
+    : formatUiTimestamp(heartbeatNextRun, language);
   const heartbeatTaskName = pickUiText(language, "Task heartbeat service", "任务心跳服务");
   const heartbeatLatestResult = heartbeatEnabled
     ? latestHeartbeatRun
@@ -4869,6 +4877,12 @@ function formatTimeAgoFromNow(value: string | undefined, language: UiLanguage = 
   return pickUiText(language, `${days}d ago`, `${days} 天前`);
 }
 
+function formatUiTimestamp(value: string | undefined, language: UiLanguage = "zh", fallback = "-"): string {
+  return formatTimestampForUi(value, UI_TIMEZONE, {
+    fallback: value === undefined ? fallback : fallback,
+  });
+}
+
 function pickLatestTimestamp(values: Array<string | undefined>): string | undefined {
   let latestValue: string | undefined;
   let latestMs = 0;
@@ -6102,6 +6116,9 @@ async function renderHtml(
   const heartbeatEnabledCount = heartbeatJobs.filter((job) => job.enabled).length;
   const heartbeatNextRun =
     heartbeatJobs.find((job) => job.enabled)?.nextRunAt ?? heartbeatJobs[0]?.nextRunAt ?? t("Not scheduled", "未排程");
+  const heartbeatNextRunLabel = heartbeatNextRun === t("Not scheduled", "未排程")
+    ? heartbeatNextRun
+    : formatUiTimestamp(heartbeatNextRun, options.language);
   const heartbeatHealth = heartbeatEnabledCount > 0 ? "ok" : "warn";
   const heartbeatRuns = await readTaskHeartbeatRuns(1);
   const latestHeartbeatRun = heartbeatRuns.runs[0];
@@ -6193,7 +6210,7 @@ async function renderHtml(
       : toolSessions
           .map((item) => {
             const toolCount = item.toolEventCount ?? (item.latestKind === "tool_event" ? 1 : 0);
-            return `<tr><td><a href="${escapeHtml(buildSessionDetailHref(item.sessionKey, options.language))}">${escapeHtml(item.label ?? item.sessionKey)}</a></td><td>${escapeHtml(item.agentId ?? t("Unassigned", "未分配"))}</td><td>${toolCount}</td><td>${badge(item.state, sessionStateLabel(item.state))}</td><td>${escapeHtml(item.lastMessageAt ?? "-")}</td></tr>`;
+            return `<tr><td><a href="${escapeHtml(buildSessionDetailHref(item.sessionKey, options.language))}">${escapeHtml(item.label ?? item.sessionKey)}</a></td><td>${escapeHtml(item.agentId ?? t("Unassigned", "未分配"))}</td><td>${toolCount}</td><td>${badge(item.state, sessionStateLabel(item.state))}</td><td>${escapeHtml(formatUiTimestamp(item.lastMessageAt, options.language))}</td></tr>`;
           })
           .join("");
   const importGuard = readImportMutationGuardState();
@@ -6288,7 +6305,7 @@ async function renderHtml(
             const status = approval.status ?? "unknown";
             const target = approval.agentId ?? approval.sessionKey ?? t("Unknown target", "未知目标");
             const commandLabel = approval.command ? escapeHtml(approval.command) : t("Approval action", "审批动作");
-            const when = approval.requestedAt ? ` · ${escapeHtml(t("Requested at", "提交于"))} ${escapeHtml(approval.requestedAt)}` : "";
+            const when = approval.requestedAt ? ` · ${escapeHtml(t("Requested at", "提交于"))} ${escapeHtml(formatUiTimestamp(approval.requestedAt, options.language))}` : "";
             return `<li>${badge(status)} ${commandLabel} · <strong>${escapeHtml(target)}</strong>${when}</li>`;
           })
           .join("");
@@ -6309,7 +6326,7 @@ async function renderHtml(
           .slice(0, 50)
           .map(
             (task) =>
-              `<tr><td>${escapeHtml(task.projectTitle)}</td><td><code>${escapeHtml(task.taskId)}</code></td><td>${escapeHtml(task.title)}</td><td>${badge(task.status, taskStateLabel(task.status, options.language))}</td><td>${escapeHtml(task.owner)}</td><td>${escapeHtml(task.dueAt ?? "-")}</td><td>${escapeHtml(task.updatedAt)}</td></tr>`,
+              `<tr><td>${escapeHtml(task.projectTitle)}</td><td><code>${escapeHtml(task.taskId)}</code></td><td>${escapeHtml(task.title)}</td><td>${badge(task.status, taskStateLabel(task.status, options.language))}</td><td>${escapeHtml(task.owner)}</td><td>${escapeHtml(formatUiTimestamp(task.dueAt, options.language))}</td><td>${escapeHtml(formatUiTimestamp(task.updatedAt, options.language))}</td></tr>`,
           )
           .join("");
   const taskGroupedListHtml =
@@ -6328,7 +6345,7 @@ async function renderHtml(
                   ${badge(task.status, taskStateLabel(task.status, options.language))}
                 </div>
                 <div class="meta"><code>${escapeHtml(task.taskId)}</code> · ${escapeHtml(task.projectTitle)} · ${escapeHtml(t("Owner", "负责人"))} ${escapeHtml(task.owner)}</div>
-                <div class="meta">${escapeHtml(t("Due", "截止"))} ${escapeHtml(task.dueAt ?? t("Not set", "未设置"))} · ${escapeHtml(t("Updated", "更新"))} ${escapeHtml(task.updatedAt)}</div>
+                <div class="meta">${escapeHtml(t("Due", "截止"))} ${escapeHtml(task.dueAt ? formatUiTimestamp(task.dueAt, options.language) : t("Not set", "未设置"))} · ${escapeHtml(t("Updated", "更新"))} ${escapeHtml(formatUiTimestamp(task.updatedAt, options.language))}</div>
                 <div class="meta"><a href="${escapeHtml(detailHref)}">${escapeHtml(t("Open task detail", "查看任务详情页"))}</a></div>
               </li>`;
             })
@@ -6345,7 +6362,7 @@ async function renderHtml(
             return `<li class="group-item">
               <div class="group-item-head"><strong>${escapeHtml(item.label ?? item.sessionKey)}</strong>${badge(item.state, sessionStateLabel(item.state))}</div>
               <div class="meta">${escapeHtml(t("Agent", "智能体"))} ${escapeHtml(item.agentId ?? t("Unassigned", "未分配"))} · ${escapeHtml(t("Calls", "调用"))} ${toolCount} ${escapeHtml(t("times", "次"))}</div>
-              <div class="meta">${escapeHtml(t("Latest activity", "最近活动"))} ${escapeHtml(item.lastMessageAt ?? "-")}</div>
+              <div class="meta">${escapeHtml(t("Latest activity", "最近活动"))} ${escapeHtml(formatUiTimestamp(item.lastMessageAt, options.language))}</div>
               <div class="meta"><a href="${escapeHtml(buildSessionDetailHref(item.sessionKey, options.language))}">${escapeHtml(t("Open session detail", "查看会话详情页"))}</a></div>
             </li>`;
           })
@@ -6362,7 +6379,7 @@ async function renderHtml(
               : job.name?.trim() || job.jobId;
             return `<li class="group-item">
               <div class="group-item-head"><strong>${escapeHtml(checkLabel)}</strong>${badge(job.health, cronHealthLabel(job.health, options.language))}</div>
-              <div class="meta">${escapeHtml(t("Next run", "下次运行"))} ${escapeHtml(job.nextRunAt ?? "-")} · ${escapeHtml(formatSeconds(job.dueInSeconds, options.language))}</div>
+              <div class="meta">${escapeHtml(t("Next run", "下次运行"))} ${escapeHtml(formatUiTimestamp(job.nextRunAt, options.language))} · ${escapeHtml(formatSeconds(job.dueInSeconds, options.language))}</div>
               <div class="meta"><a href="${escapeHtml(detailHref)}">${escapeHtml(t("Open task detail", "查看任务详情页"))}</a></div>
             </li>`;
           })
@@ -6540,7 +6557,7 @@ async function renderHtml(
     replayMoments.length === 0
       ? `<li>${escapeHtml(t("No timeline events yet.", "暂无时间线事件。"))}</li>`
       : replayMoments
-          .map((item) => `<li><code>${escapeHtml(item.timestamp)}</code> ${escapeHtml(item.summary)}</li>`)
+          .map((item) => `<li><code>${escapeHtml(formatUiTimestamp(item.timestamp, options.language))}</code> ${escapeHtml(item.summary)}</li>`)
           .join("");
   const isTodayUsageView = options.usageView === "today";
   const usagePeriodsForView = isTodayUsageView ? usageCost.periods.filter((item) => item.key === "today") : usageCost.periods;
@@ -6854,7 +6871,7 @@ async function renderHtml(
   const decisionHubHref = `${taskHubHref}#task-decision-center`;
   const executionChainHubHref = `${taskHubHref}#task-execution-chain`;
   const staffHubHref = buildHomeHref({ quick: "all" }, options.compactStatusStrip, "team", options.language, options.usageView);
-  const overviewNextOpsSummary = `Cron ${cronOverview.nextRunAt ?? t("None", "暂无")} · ${t("Heartbeat", "心跳")} ${heartbeatNextRun}`;
+  const overviewNextOpsSummary = `Cron ${cronOverview.nextRunAt ? formatUiTimestamp(cronOverview.nextRunAt, options.language) : t("None", "暂无")} · ${t("Heartbeat", "心跳")} ${heartbeatNextRunLabel}`;
   const calendarEvents = [
     ...allCronRows.map((row) => ({
       at: row.nextRun,
@@ -6929,14 +6946,14 @@ async function renderHtml(
     <div class="decision-row">
       <div class="decision-row-copy">
         <strong>${escapeHtml(t("Timed jobs running", "正在运行的定时任务"))}</strong>
-        <div class="meta">${escapeHtml(t("Next", "下次"))} ${escapeHtml(cronOverview.nextRunAt ?? t("None", "暂无"))}</div>
+        <div class="meta">${escapeHtml(t("Next", "下次"))} ${escapeHtml(cronOverview.nextRunAt ? formatUiTimestamp(cronOverview.nextRunAt, options.language) : t("None", "暂无"))}</div>
       </div>
       <div class="decision-row-value">${enabledCronCount}/${allCronRows.length}</div>
     </div>
     <div class="decision-row">
       <div class="decision-row-copy">
         <strong>${escapeHtml(t("Heartbeat checks", "任务心跳"))}</strong>
-        <div class="meta">${escapeHtml(t("Next", "下次"))} ${escapeHtml(heartbeatNextRun)}</div>
+        <div class="meta">${escapeHtml(t("Next", "下次"))} ${escapeHtml(heartbeatNextRunLabel)}</div>
       </div>
       <div class="decision-row-value">${heartbeatEnabledCount}</div>
     </div>
@@ -7105,7 +7122,7 @@ async function renderHtml(
             <a class="btn" href="${escapeHtml(cronHubHref)}">${escapeHtml(t("Open cron board", "查看 Cron 看板"))}</a>
           </div>
           <div class="meta">${escapeHtml(t("Use the task hub for the full cron board. This panel stays compact and only tells you whether runtime scheduling is healthy.", "完整 Cron 看板已下放到任务页，这里只保留紧凑的运行检查点。"))}</div>
-          <div class="meta">${escapeHtml(t("Status", "状态"))} ${badge(cronOverview.health.status)} · ${escapeHtml(t("Next", "下次"))} ${escapeHtml(cronOverview.nextRunAt ?? t("None", "暂无"))} · ${escapeHtml(t("Enabled", "启用"))} ${enabledCronCount}</div>
+          <div class="meta">${escapeHtml(t("Status", "状态"))} ${badge(cronOverview.health.status)} · ${escapeHtml(t("Next", "下次"))} ${escapeHtml(cronOverview.nextRunAt ? formatUiTimestamp(cronOverview.nextRunAt, options.language) : t("None", "暂无"))} · ${escapeHtml(t("Enabled", "启用"))} ${enabledCronCount}</div>
           ${
             overviewUpcomingRows
               ? `<div class="decision-list" style="margin-top:10px;">${overviewUpcomingRows}</div>`
@@ -7115,7 +7132,7 @@ async function renderHtml(
         <details class="card compact-details" id="heartbeat-health">
           <summary>${escapeHtml(t("Heartbeat monitor", "任务心跳监控"))}</summary>
           <div class="fold-body">
-            <div class="meta">${escapeHtml(t("Status", "状态"))} ${badge(heartbeatHealth)} · ${escapeHtml(t("Enabled", "已启用"))} ${heartbeatEnabledCount} ${escapeHtml(t("items", "个"))} · ${escapeHtml(t("Next", "下次"))} ${escapeHtml(heartbeatNextRun)}</div>
+            <div class="meta">${escapeHtml(t("Status", "状态"))} ${badge(heartbeatHealth)} · ${escapeHtml(t("Enabled", "已启用"))} ${heartbeatEnabledCount} ${escapeHtml(t("items", "个"))} · ${escapeHtml(t("Next", "下次"))} ${escapeHtml(heartbeatNextRunLabel)}</div>
             ${heartbeatGroupedListHtml}
             <details class="compact-table-details" style="margin-top:12px;">
               <summary>${escapeHtml(t("Open raw table", "查看原始表格"))}</summary>
@@ -7128,7 +7145,7 @@ async function renderHtml(
                         const checkLabel = job.jobId.toLowerCase().includes("heartbeat")
                           ? t("Task heartbeat service", "任务心跳服务")
                           : job.name?.trim() || job.jobId;
-                        return `<tr><td>${escapeHtml(checkLabel)}</td><td>${badge(job.health, cronHealthLabel(job.health, options.language))}</td><td>${escapeHtml(job.nextRunAt ?? "-")}</td><td>${escapeHtml(formatSeconds(job.dueInSeconds, options.language))}</td></tr>`;
+                        return `<tr><td>${escapeHtml(checkLabel)}</td><td>${badge(job.health, cronHealthLabel(job.health, options.language))}</td><td>${escapeHtml(formatUiTimestamp(job.nextRunAt, options.language))}</td><td>${escapeHtml(formatSeconds(job.dueInSeconds, options.language))}</td></tr>`;
                       })
                       .join("")}</tbody></table>`
               }</div>
@@ -7220,7 +7237,7 @@ async function renderHtml(
         <div>${badge(cronOverview.health.status, cronHealthLabel(cronOverview.health.status, options.language))}</div>
       </div>
       <div class="meta">${escapeHtml(t("Grouped by agent so you can see which timed jobs are active, what they do, and when they run next.", "按智能体分组展示当前定时任务、任务目的以及下次执行时间。"))}</div>
-      <div class="meta">${escapeHtml(t("Next", "下次"))} ${escapeHtml(cronOverview.nextRunAt ?? t("None", "暂无"))} · ${escapeHtml(t("Heartbeat", "心跳"))} ${escapeHtml(heartbeatNextRun)} · ${escapeHtml(t("Enabled", "启用"))} ${enabledCronCount}</div>
+      <div class="meta">${escapeHtml(t("Next", "下次"))} ${escapeHtml(cronOverview.nextRunAt ? formatUiTimestamp(cronOverview.nextRunAt, options.language) : t("None", "暂无"))} · ${escapeHtml(t("Heartbeat", "心跳"))} ${escapeHtml(heartbeatNextRunLabel)} · ${escapeHtml(t("Enabled", "启用"))} ${enabledCronCount}</div>
       ${cronBoardHtml}
       <details class="compact-table-details" style="margin-top:12px;">
         <summary>${escapeHtml(t("Open Cron table detail", "查看 Cron 表格明细"))}</summary>
@@ -7247,7 +7264,7 @@ async function renderHtml(
             (member) =>
               `<tr><td>${escapeHtml(member.displayName)}</td><td><code>${escapeHtml(member.agentId)}</code></td><td>${escapeHtml(member.configuredModel)}</td><td>${escapeHtml(member.currentModel)}${
                 member.currentModelUpdatedAt
-                  ? `<div class="meta">${escapeHtml(t("Updated", "更新"))} ${escapeHtml(member.currentModelUpdatedAt)}</div>`
+                  ? `<div class="meta">${escapeHtml(t("Updated", "更新"))} ${escapeHtml(formatUiTimestamp(member.currentModelUpdatedAt, options.language))}</div>`
                   : `<div class="meta">${escapeHtml(t("No runtime model observed yet.", "尚未观察到运行时模型。"))}</div>`
               }</td><td>${escapeHtml(member.customNote ?? t("Not provided", "未提供"))}</td><td>${escapeHtml(member.toolsProfile)}</td><td>${escapeHtml(member.workspace)}</td></tr>`,
           )
@@ -7593,7 +7610,7 @@ async function renderHtml(
             ? '<div class="empty-state">暂无会话数据。</div>'
             : `<div class="group-list"><details class="group-section" open><summary>最近活跃会话（${sessionPreview.items.length}）</summary><ul class="group-items">${sessionPreview.items
                 .slice(0, 14)
-                .map((item) => `<li class="group-item"><div class="group-item-head"><strong>${escapeHtml(item.label ?? item.sessionKey)}</strong>${badge(item.state, sessionStateLabel(item.state))}</div><div class="meta">智能体 ${escapeHtml(item.agentId ?? "-")} · 最近 ${escapeHtml(item.lastMessageAt ?? "-")}</div><div class="meta">最新事件 ${escapeHtml(item.latestKind ?? "message")} · 历史 ${item.historyCount}</div><div class="meta"><a href="${escapeHtml(buildSessionDetailHref(item.sessionKey, options.language))}">查看会话详情页</a></div></li>`)
+                .map((item) => `<li class="group-item"><div class="group-item-head"><strong>${escapeHtml(item.label ?? item.sessionKey)}</strong>${badge(item.state, sessionStateLabel(item.state))}</div><div class="meta">智能体 ${escapeHtml(item.agentId ?? "-")} · 最近 ${escapeHtml(formatUiTimestamp(item.lastMessageAt, options.language))}</div><div class="meta">最新事件 ${escapeHtml(item.latestKind ?? "message")} · 历史 ${item.historyCount}</div><div class="meta"><a href="${escapeHtml(buildSessionDetailHref(item.sessionKey, options.language))}">查看会话详情页</a></div></li>`)
                 .join("")}</ul></details></div>`
         }
         <details class="compact-table-details" style="margin-top:12px;">
@@ -11340,7 +11357,7 @@ async function renderHtml(
           </div>
         </div>
         <h1>OpenClaw Control Center</h1>
-        <div class="meta">${escapeHtml(t("Updated", "更新时间"))}${escapeHtml(options.language === "en" ? ": " : "：")}${escapeHtml(snapshot.generatedAt ?? t("Not available", "暂无"))}</div>
+        <div class="meta">${escapeHtml(t("Updated", "更新时间"))}${escapeHtml(options.language === "en" ? ": " : "：")}${escapeHtml(snapshot.generatedAt ? formatUiTimestamp(snapshot.generatedAt, options.language) : t("Not available", "暂无"))}</div>
         ${languageToggle}
       </div>
       <nav class="nav-links">${sectionNav}</nav>
@@ -11391,8 +11408,8 @@ async function renderHtml(
       </div>
       <section class="card" style="margin-top:10px;">
         <h2>${escapeHtml(t("Timed jobs and heartbeat", "定时与心跳"))}</h2>
-        <div class="meta">${escapeHtml(t("Timed jobs", "定时"))} ${badge(cronOverview.health.status)} · ${escapeHtml(t("Next", "下次"))} ${escapeHtml(cronOverview.nextRunAt ?? t("None", "暂无"))}</div>
-        <div class="meta">${escapeHtml(t("Heartbeat", "心跳"))} ${badge(heartbeatHealth)} · ${escapeHtml(t("Next", "下次"))} ${escapeHtml(heartbeatNextRun)}</div>
+        <div class="meta">${escapeHtml(t("Timed jobs", "定时"))} ${badge(cronOverview.health.status)} · ${escapeHtml(t("Next", "下次"))} ${escapeHtml(cronOverview.nextRunAt ? formatUiTimestamp(cronOverview.nextRunAt, options.language) : t("None", "暂无"))}</div>
+        <div class="meta">${escapeHtml(t("Heartbeat", "心跳"))} ${badge(heartbeatHealth)} · ${escapeHtml(t("Next", "下次"))} ${escapeHtml(heartbeatNextRunLabel)}</div>
         <div class="meta"><a href="/?section=overview#cron-health">${escapeHtml(t("Open timed jobs", "查看定时任务"))}</a> · <a href="/?section=overview#heartbeat-health">${escapeHtml(t("Open heartbeat checks", "查看任务心跳"))}</a></div>
       </section>
     </aside>
@@ -11606,6 +11623,7 @@ export function resolveLegacyDashboardSectionForSmoke(path: string): DashboardSe
 function buildDashboardSearchResult(
   snapshot: ReadModelSnapshot,
   query: DashboardSearchQuery,
+  language: UiLanguage = "zh",
 ): DashboardSearchResult | undefined {
   if (!query.q) return undefined;
 
@@ -11633,7 +11651,7 @@ function buildDashboardSearchResult(
         : items
             .map(
               (item) =>
-                `<tr><td><code>${escapeHtml(item.taskId)}</code></td><td>${escapeHtml(item.title)}</td><td>${badge(item.status)}</td><td>${escapeHtml(item.owner)}</td><td>${escapeHtml(item.projectTitle)}</td><td>${escapeHtml(item.updatedAt)}</td></tr>`,
+                `<tr><td><code>${escapeHtml(item.taskId)}</code></td><td>${escapeHtml(item.title)}</td><td>${badge(item.status)}</td><td>${escapeHtml(item.owner)}</td><td>${escapeHtml(item.projectTitle)}</td><td>${escapeHtml(formatUiTimestamp(item.updatedAt, language))}</td></tr>`,
             )
             .join("");
     return {
@@ -11661,7 +11679,7 @@ function buildDashboardSearchResult(
         : items
             .map(
               (item) =>
-                `<tr><td><code>${escapeHtml(item.projectId)}</code></td><td>${escapeHtml(item.title)}</td><td>${badge(item.status)}</td><td>${escapeHtml(item.owner)}</td><td>${escapeHtml(item.updatedAt)}</td></tr>`,
+                `<tr><td><code>${escapeHtml(item.projectId)}</code></td><td>${escapeHtml(item.title)}</td><td>${badge(item.status)}</td><td>${escapeHtml(item.owner)}</td><td>${escapeHtml(formatUiTimestamp(item.updatedAt, language))}</td></tr>`,
             )
             .join("");
     return {
@@ -11696,7 +11714,7 @@ function buildDashboardSearchResult(
         : items
             .map(
               (item) =>
-                `<tr><td><code>${escapeHtml(item.sessionKey)}</code></td><td>${badge(item.state)}</td><td>${escapeHtml(item.agentId ?? "-")}</td><td>${escapeHtml(item.label ?? "-")}</td><td>${escapeHtml(item.lastMessageAt ?? "-")}</td></tr>`,
+                `<tr><td><code>${escapeHtml(item.sessionKey)}</code></td><td>${badge(item.state)}</td><td>${escapeHtml(item.agentId ?? "-")}</td><td>${escapeHtml(item.label ?? "-")}</td><td>${escapeHtml(formatUiTimestamp(item.lastMessageAt, language))}</td></tr>`,
             )
             .join("");
     return {
@@ -12872,7 +12890,7 @@ async function renderEditableFileWorkbench(input: {
           <div>
             <div class="file-editor-title" data-file-title>${escapeHtml(firstEntry.title)}</div>
             <div class="meta" data-file-path>${escapeHtml(firstEntry.sourcePath)}</div>
-            <div class="meta" data-file-meta>${escapeHtml(t("Updated", "更新于"))} ${escapeHtml(firstEntry.updatedAt)} · ${formatInt(firstEntry.size)} bytes</div>
+            <div class="meta" data-file-meta>${escapeHtml(t("Updated", "更新于"))} ${escapeHtml(formatUiTimestamp(firstEntry.updatedAt, input.language))} · ${formatInt(firstEntry.size)} bytes</div>
           </div>
           <div class="toolbar">
             ${tokenField}
@@ -12887,14 +12905,14 @@ async function renderEditableFileWorkbench(input: {
   </section>`;
 }
 
-function renderStructuredChatDocSummary(entries: StructuredChatDocEntry[]): string {
+function renderStructuredChatDocSummary(entries: StructuredChatDocEntry[], language: UiLanguage = "zh"): string {
   if (entries.length === 0) {
     return '<div class="empty-state">尚无聊天输出结构化入库记录。</div>';
   }
   return `<ul class="story-list">${entries
     .slice(0, 16)
     .map(
-      (entry) => `<li><strong>${escapeHtml(entry.title)}</strong><div class="meta">${escapeHtml(entry.excerpt)}</div><div class="meta">会话 ${escapeHtml(entry.sourceSessionKey)} · 更新 ${escapeHtml(entry.updatedAt)}</div></li>`,
+      (entry) => `<li><strong>${escapeHtml(entry.title)}</strong><div class="meta">${escapeHtml(entry.excerpt)}</div><div class="meta">会话 ${escapeHtml(entry.sourceSessionKey)} · 更新 ${escapeHtml(formatUiTimestamp(entry.updatedAt, language))}</div></li>`,
     )
     .join("")}</ul>`;
 }
@@ -14394,7 +14412,7 @@ function renderTaskExecutionChainCards(
         .map((value) => `<code>${escapeHtml(value)}</code>`)
         .join(' <span class="execution-chain-arrow">→</span> ');
       const latestLine = item.latestAt
-        ? `${pickUiText(language, "Latest", "最近")} ${escapeHtml(item.latestAt)}`
+        ? `${pickUiText(language, "Latest", "最近")} ${escapeHtml(formatUiTimestamp(item.latestAt, language))}`
         : escapeHtml(pickUiText(language, "No history yet", "暂无历史"));
       const sourceLine = executionChainSourceLabel(chain, language);
       const summarySource = item.latestSnippet?.trim() ? item.latestSnippet : chain.detail;
@@ -15826,20 +15844,24 @@ function renderCollaborationFilterScript(language: UiLanguage = "zh"): string {
 }
 
 function renderQuotaResetScript(): string {
+  const timeZone = JSON.stringify(UI_TIMEZONE);
   return `<script>
 (() => {
   const nodes = Array.from(document.querySelectorAll('[data-quota-reset-at]'));
   if (nodes.length === 0) return;
 
   const timeFormatter = new Intl.DateTimeFormat(undefined, {
+    timeZone: ${timeZone},
     hour: 'numeric',
     minute: '2-digit',
   });
   const monthDayFormatter = new Intl.DateTimeFormat(undefined, {
+    timeZone: ${timeZone},
     month: 'short',
     day: 'numeric',
   });
   const monthDayYearFormatter = new Intl.DateTimeFormat(undefined, {
+    timeZone: ${timeZone},
     month: 'short',
     day: 'numeric',
     year: 'numeric',
@@ -18686,14 +18708,14 @@ function renderSessionDrilldownPage(
 </head>
 <body>
   <h1>${escapeHtml(t("Session Drilldown", "会话详情"))}</h1>
-  <div class="meta"><code>${escapeHtml(detail.session.sessionKey)}</code> | state=${escapeHtml(detail.session.state)} | generatedAt=${escapeHtml(detail.generatedAt)}</div>
+  <div class="meta"><code>${escapeHtml(detail.session.sessionKey)}</code> | state=${escapeHtml(detail.session.state)} | generatedAt=${escapeHtml(formatUiTimestamp(detail.generatedAt, language))}</div>
 
   <div class="card">
     <div>session=${escapeHtml(detail.session.sessionKey)} label=${escapeHtml(detail.session.label ?? "-")} agent=${escapeHtml(detail.session.agentId ?? "-")}</div>
-    <div class="meta">lastMessageAt=${escapeHtml(detail.session.lastMessageAt ?? "-")} latestEvent=${escapeHtml(detail.latestKind ?? "-")} role=${escapeHtml(detail.latestRole ?? "-")} tool=${escapeHtml(detail.latestToolName ?? "-")} latestHistoryAt=${escapeHtml(detail.latestHistoryAt ?? "-")}</div>
+    <div class="meta">lastMessageAt=${escapeHtml(formatUiTimestamp(detail.session.lastMessageAt, language))} latestEvent=${escapeHtml(detail.latestKind ?? "-")} role=${escapeHtml(detail.latestRole ?? "-")} tool=${escapeHtml(detail.latestToolName ?? "-")} latestHistoryAt=${escapeHtml(formatUiTimestamp(detail.latestHistoryAt, language))}</div>
     <div class="meta">historyCount=${detail.historyCount} historyLimit=readonly-safe</div>
     <div class="meta">historyError=${escapeHtml(detail.historyError ?? "none")}</div>
-    <div class="meta">status model=${escapeHtml(status?.model ?? "-")} tokensIn=${status?.tokensIn ?? 0} tokensOut=${status?.tokensOut ?? 0} cost=${status?.cost ?? 0} updatedAt=${escapeHtml(status?.updatedAt ?? "-")}</div>
+    <div class="meta">status model=${escapeHtml(status?.model ?? "-")} tokensIn=${status?.tokensIn ?? 0} tokensOut=${status?.tokensOut ?? 0} cost=${status?.cost ?? 0} updatedAt=${escapeHtml(formatUiTimestamp(status?.updatedAt, language))}</div>
   </div>
 
   ${executionChainCard}
@@ -18736,7 +18758,7 @@ function renderSessionHistoryRows(items: SessionHistoryMessage[], language: UiLa
         .join(" | ");
       const content = refs ? `${safeTruncate(item.content, 620)}\n${refs}` : safeTruncate(item.content, 700);
       const suffix = item.truncated ? " [truncated]" : "";
-      return `<tr><td>${escapeHtml(item.timestamp ?? "-")}</td><td>${badge(item.kind)}</td><td>${escapeHtml(item.role)}</td><td>${escapeHtml(tool)}</td><td>${escapeHtml(status)}</td><td class="cell-content">${escapeHtml(content + suffix)}</td></tr>`;
+      return `<tr><td>${escapeHtml(formatUiTimestamp(item.timestamp, language))}</td><td>${badge(item.kind)}</td><td>${escapeHtml(item.role)}</td><td>${escapeHtml(tool)}</td><td>${escapeHtml(status)}</td><td class="cell-content">${escapeHtml(content + suffix)}</td></tr>`;
     })
     .join("");
 }
@@ -18749,7 +18771,7 @@ function renderAuditPage(timeline: AuditTimelineSnapshot, severity: AuditSeverit
           .slice(0, 300)
           .map(
             (event) =>
-              `<tr><td>${escapeHtml(event.timestamp)}</td><td>${badge(event.severity)}</td><td>${escapeHtml(event.source)}</td><td>${escapeHtml(event.message)}</td></tr>`,
+              `<tr><td>${escapeHtml(formatUiTimestamp(event.timestamp, "en"))}</td><td>${badge(event.severity)}</td><td>${escapeHtml(event.source)}</td><td>${escapeHtml(event.message)}</td></tr>`,
           )
           .join("");
 
@@ -18796,7 +18818,7 @@ function renderAuditPage(timeline: AuditTimelineSnapshot, severity: AuditSeverit
       <button type="submit">apply</button>
     </form>
     <div class="meta" style="margin-top:8px;">
-      generatedAt=${escapeHtml(timeline.generatedAt)} | info=${timeline.counts.info} warn=${timeline.counts.warn} action_required=${timeline.counts["action-required"]} error=${timeline.counts.error}
+      generatedAt=${escapeHtml(formatUiTimestamp(timeline.generatedAt, "en"))} | info=${timeline.counts.info} warn=${timeline.counts.warn} action_required=${timeline.counts["action-required"]} error=${timeline.counts.error}
     </div>
     <table>
       <thead><tr><th>timestamp</th><th>severity</th><th>source</th><th>message</th></tr></thead>
@@ -18849,15 +18871,15 @@ function renderTaskDetailPage(input: {
   <div class="page">
     <div class="card">
       <h1>${escapeHtml(task.title)}</h1>
-      <div class="meta">${escapeHtml(t("Task detail page", "任务详情页"))} · ${escapeHtml(t("Generated at", "生成于"))} ${escapeHtml(input.generatedAt)}</div>
+      <div class="meta">${escapeHtml(t("Task detail page", "任务详情页"))} · ${escapeHtml(t("Generated at", "生成于"))} ${escapeHtml(formatUiTimestamp(input.generatedAt, language))}</div>
     </div>
     <div class="card">
       <h2>${escapeHtml(t("Key facts", "关键信息"))}</h2>
       <div class="meta"><code>${escapeHtml(task.taskId)}</code> ${badge(task.status, taskStateLabel(task.status, language))}</div>
       <div class="meta">${escapeHtml(t("Project", "项目"))}：${escapeHtml(task.projectTitle)}（${escapeHtml(task.projectId)}）</div>
       <div class="meta">${escapeHtml(t("Owner", "负责人"))}：${escapeHtml(task.owner)}</div>
-      <div class="meta">${escapeHtml(t("Due time", "截止时间"))}：${escapeHtml(task.dueAt ?? t("Not set", "未设置"))}</div>
-      <div class="meta">${escapeHtml(t("Updated at", "更新时间"))}：${escapeHtml(task.updatedAt)}</div>
+      <div class="meta">${escapeHtml(t("Due time", "截止时间"))}：${escapeHtml(task.dueAt ? formatUiTimestamp(task.dueAt, language) : t("Not set", "未设置"))}</div>
+      <div class="meta">${escapeHtml(t("Updated at", "更新时间"))}：${escapeHtml(formatUiTimestamp(task.updatedAt, language))}</div>
       <div class="meta">${escapeHtml(t("Sessions", "会话"))}：${task.sessionKeys.length > 0 ? task.sessionKeys.map((id) => `<a href="${escapeHtml(buildSessionDetailHref(id, language))}"><code>${escapeHtml(id)}</code></a>`).join(" · ") : escapeHtml(t("None yet", "暂无"))}</div>
     </div>
     <div class="card">
@@ -18925,7 +18947,7 @@ function renderCronJobDetailPage(
   <div class="page">
     <div class="card">
       <h1>${escapeHtml(job.name)}</h1>
-      <div class="meta">${escapeHtml(pickUiText(language, "Cron detail page", "Cron 任务详情页"))} · ${escapeHtml(pickUiText(language, "Generated at", "生成于"))} ${escapeHtml(generatedAt)}</div>
+      <div class="meta">${escapeHtml(pickUiText(language, "Cron detail page", "Cron 任务详情页"))} · ${escapeHtml(pickUiText(language, "Generated at", "生成于"))} ${escapeHtml(formatUiTimestamp(generatedAt, language))}</div>
     </div>
     <div class="card">
       <h2>${escapeHtml(pickUiText(language, "Key facts", "关键信息"))}</h2>
@@ -18933,7 +18955,7 @@ function renderCronJobDetailPage(
       <div class="meta">${escapeHtml(pickUiText(language, "Agent", "执行智能体"))}：${escapeHtml(job.owner)}</div>
       <div class="meta">${escapeHtml(pickUiText(language, "Purpose", "任务目的"))}：${escapeHtml(job.purpose)}</div>
       <div class="meta">${escapeHtml(pickUiText(language, "Schedule", "调度"))}：${escapeHtml(job.schedule)}</div>
-      <div class="meta">${escapeHtml(pickUiText(language, "Next run", "下次运行"))}：${escapeHtml(job.nextRunAt)} · ${escapeHtml(formatSeconds(job.dueInSeconds, language))}</div>
+      <div class="meta">${escapeHtml(pickUiText(language, "Next run", "下次运行"))}：${escapeHtml(formatUiTimestamp(job.nextRunAt, language))} · ${escapeHtml(formatSeconds(job.dueInSeconds, language))}</div>
     </div>
     <div class="meta"><a href="${escapeHtml(buildHomeHref({ quick: "all" }, true, "overview", language))}#cron-health">${escapeHtml(pickUiText(language, "Back to cron board", "返回 Cron 看板"))}</a></div>
   </div>

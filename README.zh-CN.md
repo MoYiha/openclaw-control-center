@@ -190,6 +190,12 @@ npm run dev:ui
 8. `npm run smoke:hall`
 9. `npm run dev:ui`
 
+## `UI_TIMEZONE` 是什么
+- `UI_TIMEZONE` 用来控制 UI 里“绝对时间”的展示时区。
+- 默认值是 `UTC`。
+- 常见示例：`Asia/Shanghai`、`Europe/Paris`、`America/Los_Angeles`。
+- 它不会影响“5 分钟前”这类相对时间，只影响会话最近活动、任务更新时间、Cron 下次运行、审批时间、详情页这些绝对时间。
+
 ## Docker 部署
 - 可以，控制中心支持通过 Docker 运行。
 - 真正关键的不只是 Docker，而是容器里能否看到同一套 OpenClaw 数据路径，并且能连到 Gateway。
@@ -204,6 +210,10 @@ npm run dev:ui
   - `cp .env.example .env`
   - 按实际路径修改 `docker-compose.example.yml` 里的挂载和 `LOCAL_API_TOKEN`
   - `docker compose -f docker-compose.example.yml up --build`
+- 如果 Gateway 跑在宿主机上：
+  - Linux Docker 建议保留 `extra_hosts: ["host.docker.internal:host-gateway"]`
+  - 容器直连宿主机时，优先用 `ws://host.docker.internal:18789`
+  - 只有当 Gateway 端点本身真的在做 TLS，并且证书与配置的主机名匹配时，再使用 `wss://...`
 - 如果 UI 需要通过反向代理、局域网地址或 Tailscale 访问，再额外设置：
   - `OPENCLAW_CONTROL_UI_URL`
   - `UI_BIND_ADDRESS=0.0.0.0`

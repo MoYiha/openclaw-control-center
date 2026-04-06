@@ -187,6 +187,12 @@ Notes:
   - enter that same token in the UI when a protected action prompts for it
 - If you leave `LOCAL_API_TOKEN` unset while the auth gate is enabled, protected writes stay blocked by design.
 
+## What `UI_TIMEZONE` is
+- `UI_TIMEZONE` controls how server-rendered absolute timestamps are displayed in the UI.
+- Default is `UTC`.
+- Examples: `Asia/Shanghai`, `Europe/Paris`, `America/Los_Angeles`.
+- Relative labels like `5m ago` are unchanged; this only affects absolute timestamps such as session activity, task updates, cron next-run times, approvals, and drilldown pages.
+
 ## Quick start
 1. `npm install`
 2. `cp .env.example .env`
@@ -212,6 +218,10 @@ Notes:
   - `cp .env.example .env`
   - edit `docker-compose.example.yml` mount paths and `LOCAL_API_TOKEN`
   - `docker compose -f docker-compose.example.yml up --build`
+- If the Gateway runs on the Docker host:
+  - keep `extra_hosts: ["host.docker.internal:host-gateway"]` on Linux Docker
+  - prefer `ws://host.docker.internal:18789` for direct container-to-host traffic
+  - only use `wss://...` when the Gateway endpoint itself is terminating TLS and the certificate matches the hostname you configured
 - If the UI is reached through a reverse proxy, LAN host, or Tailscale, also set:
   - `OPENCLAW_CONTROL_UI_URL`
   - `UI_BIND_ADDRESS=0.0.0.0`
